@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitor DHT22</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script defer src="script.js"></script>
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">ESP32 Monitor</div>
+    <div class="toggle-theme">
+      <button id="themeToggle">
+        <span id="themeIcon" class="sun">☀️</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Monitoreo del Sensor DHT22</h1>
+    <div class="cards">
+      <div class="card">
+        <div class="icon">🌡️</div>
+        <div class="info">
+          <h2>Temperatura</h2>
+          <p id="temp">-- °C</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="icon">💧</div>
+        <div class="info">
+          <h2>Humedad</h2>
+          <p id="hum">-- %</p>
+        </div>
+      </div>
+    </div>
+    <button class="btn" id="showChart">📊 Ver Gráficos</button>
+  </main>
+</body>
+</html>
+
