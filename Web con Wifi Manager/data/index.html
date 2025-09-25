@@ -4,23 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Monitor DHT22</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script defer src="script.js"></script>
 </head>
+
 <body>
   <header class="navbar">
     <div class="logo">ESP32 Monitor</div>
     <div class="toggle-theme">
       <button id="themeToggle">
-        <span id="themeIcon" class="sun">☀️</span>
+        <span id="themeIcon">☀️</span>
       </button>
     </div>
   </header>
 
   <main class="container">
     <h1>Monitoreo del Sensor DHT22</h1>
+
     <div class="cards">
       <div class="card">
         <div class="icon">🌡️</div>
@@ -29,6 +31,7 @@
           <p id="temp">-- °C</p>
         </div>
       </div>
+
       <div class="card">
         <div class="icon">💧</div>
         <div class="info">
@@ -37,8 +40,13 @@
         </div>
       </div>
     </div>
-    <button class="btn" id="showChart">📊 Ver Gráficos</button>
+
+    <div class="calendar-container">
+      <label for="datePicker">Selecciona una fecha:</label>
+      <input type="date" id="datePicker" />
+    </div>
+
+    <button class="btn" id="showChart">📊 Ver Gráfica</button>
   </main>
 </body>
 </html>
-

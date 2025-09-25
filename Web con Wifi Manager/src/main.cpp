@@ -6,23 +6,77 @@
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
 #include <DHTesp.h>
+#include <FS.h>
+#include <time.h>
 
-const int DHT_PIN = 4;
-const unsigned long READ_INTERVAL = 2000; // ms entre lecturas
-
-// ---- Aquí defines tu red WiFi ----
-const char* WIFI_SSID = "Tobar_2";      // Cambia aquí el nombre de tu red
-const char* WIFI_PASS = "Homb0549";     // Cambia aquí la contraseña de tu red
-// -----------------------------------
+#define DHT_PIN 4
+#define READ_INTERVAL 3000 // ms
 
 WebServer server(80);
 DHTesp dht;
 
+// Variables globales
 float lastTemp = NAN;
 float lastHum = NAN;
 unsigned long lastReadMs = 0;
 
-// -------------------- Utilidades SPIFFS --------------------
+// ---- CONFIGURAR HORA ----
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -3 * 3600;  // Argentina GMT-3
+const int daylightOffset_sec = 0;
+
+// -------------------- Función para obtener fecha y hora actual --------------------
+String getDate() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "1970-01-01";
+  char buffer[11];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d", &timeinfo);
+  return String(buffer);
+}
+
+String getTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "00:00";
+  char buffer[6];
+  strftime(buffer, sizeof(buffer), "%H:%M", &timeinfo);
+  return String(buffer);
+}
+
+// -------------------- Guardar dato en historial --------------------
+void saveToHistory(float temp, float hum) {
+  if (!SPIFFS.exists("/history.json")) {
+    File file = SPIFFS.open("/history.json", "w");
+    if (!file) return;
+    file.print("{}");
+    file.close();
+  }
+
+  File file = SPIFFS.open("/history.json", "r");
+  DynamicJsonDocument doc(2048);
+  deserializeJson(doc, file);
+  file.close();
+
+  String today = getDate();
+
+  JsonArray dayArray = doc[today];
+  if (dayArray.isNull()) {
+    dayArray = doc.createNestedArray(today);
+  }
+
+  JsonObject entry = dayArray.createNestedObject();
+  entry["time"] = getTime();
+  entry["temp"] = temp;
+  entry["hum"] = hum;
+
+  // Guardar nuevamente
+  File fileW = SPIFFS.open("/history.json", "w");
+  if (serializeJson(doc, fileW) == 0) {
+    Serial.println("Error guardando history.json");
+  }
+  fileW.close();
+}
+
+// -------------------- Servir archivo SPIFFS --------------------
 String contentType(const String &path) {
   if (path.endsWith(".html")) return "text/html";
   if (path.endsWith(".css"))  return "text/css";
@@ -43,122 +97,112 @@ bool serveFile(const String &path) {
 }
 
 // -------------------- Handlers --------------------
-void handleRoot() {
-  if (!serveFile("/index.html"))
-    server.send(404, "text/plain", "index.html not found");
-}
-
 void handleApiData() {
-  unsigned long now = millis();
-  if (now - lastReadMs >= READ_INTERVAL) {
-    lastReadMs = now;
-    TempAndHumidity th = dht.getTempAndHumidity();
-    if (!isnan(th.temperature) && !isnan(th.humidity)) {
-      lastTemp = th.temperature;
-      lastHum  = th.humidity;
-      Serial.printf("DHT read: T=%.1f C  H=%.1f %%\n", lastTemp, lastHum);
-    } else {
-      Serial.println("DHT read failed");
-    }
-  }
-
   StaticJsonDocument<128> doc;
-  if (isnan(lastTemp) || isnan(lastHum))
+  if (isnan(lastTemp) || isnan(lastHum)) {
     doc["error"] = "sensor";
-  else {
-    doc["temp"] = round(lastTemp * 10.0) / 10.0;
-    doc["hum"]  = round(lastHum * 10.0) / 10.0;
+  } else {
+    doc["temp"] = lastTemp;
+    doc["hum"] = lastHum;
   }
   doc["ts"] = millis();
+
   String out;
   serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleHistory() {
+  if (!server.hasArg("date")) {
+    server.send(400, "application/json", "{\"error\":\"missing date\"}");
+    return;
+  }
+  String date = server.arg("date");
+
+  if (!SPIFFS.exists("/history.json")) {
+    server.send(200, "application/json", "[]");
+    return;
+  }
+
+  File file = SPIFFS.open("/history.json", "r");
+  DynamicJsonDocument doc(2048);
+  deserializeJson(doc, file);
+  file.close();
+
+  if (!doc.containsKey(date)) {
+    server.send(200, "application/json", "[]");
+    return;
+  }
+
+  String out;
+  serializeJson(doc[date], out);
   server.send(200, "application/json", out);
 }
 
 void handleNotFound() {
   String path = server.uri();
   if (serveFile(path)) return;
-  server.send(404, "text/plain", "404");
-}
-
-// -------------------- Función para AP automático --------------------
-String makeApName() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char buf[9];
-  sprintf(buf, "%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]); 
-  String mactail = String(buf + 4); 
-  return "ESP32_" + mactail;
+  server.send(404, "text/plain", "404 Not Found");
 }
 
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
   delay(100);
-  Serial.println("\nStarting ESP32 DHT22 WebServer");
+  Serial.println("Iniciando ESP32 DHT22 con historial");
 
   // Montar SPIFFS
   if (!SPIFFS.begin(true)) {
-    Serial.println("SPIFFS mount failed");
-  } else {
-    Serial.println("SPIFFS mounted");
+    Serial.println("Error montando SPIFFS");
   }
 
-  // Intento directo de conexión con red definida
+  // Configurar WiFi con WiFiManager
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.printf("Intentando conectar a WiFi SSID: %s\n", WIFI_SSID);
+  WiFiManager wm;
+  wm.autoConnect("ESP32-DHT_AP");
 
-  unsigned long startAttemptTime = millis();
-  const unsigned long timeout = 10000; // 10s timeout
+  Serial.print("IP asignada: ");
+  Serial.println(WiFi.localIP());
 
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < timeout) {
-    Serial.print(".");
-    delay(500);
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConectado directamente a la red configurada.");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\nFallo la conexión directa. Activando WiFiManager...");
-
-    WiFiManager wm;
-    String apName = makeApName();
-    wm.setTimeout(180); // 3 minutos
-    if (!wm.autoConnect(apName.c_str())) {
-      Serial.println("WiFiManager no logró conectar. Continuando en modo AP.");
-    } else {
-      Serial.println("Conectado mediante WiFiManager.");
-    }
-  }
-
-  // Iniciar mDNS
-  if (MDNS.begin("ESP32-DHT")) {
-    Serial.println("mDNS disponible en: http://ESP32-DHT.local");
-  } else {
-    Serial.println("Error iniciando mDNS");
-  }
+  // Configurar NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   // Inicializar DHT22
   dht.setup(DHT_PIN, DHTesp::DHT22);
 
   // Configurar rutas
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/index.html", HTTP_GET, [](){ serveFile("/index.html"); });
-  server.on("/style.css", HTTP_GET, [](){ serveFile("/style.css"); });
-  server.on("/script.js", HTTP_GET, [](){ serveFile("/script.js"); });
+  server.on("/", HTTP_GET, []() { serveFile("/index.html"); });
+  server.on("/index.html", HTTP_GET, []() { serveFile("/index.html"); });
+  server.on("/styles.css", HTTP_GET, []() { serveFile("/styles.css"); });
+  server.on("/script.js", HTTP_GET, []() { serveFile("/script.js"); });
   server.on("/api/data", HTTP_GET, handleApiData);
+  server.on("/api/history", HTTP_GET, handleHistory);
   server.onNotFound(handleNotFound);
 
   server.begin();
   Serial.println("Servidor HTTP iniciado");
 
-  lastReadMs = millis() - READ_INTERVAL;
+  lastReadMs = millis();
 }
 
 // -------------------- Loop --------------------
 void loop() {
   server.handleClient();
+
+  unsigned long now = millis();
+  if (now - lastReadMs >= READ_INTERVAL) {
+    lastReadMs = now;
+
+    TempAndHumidity th = dht.getTempAndHumidity();
+    if (!isnan(th.temperature) && !isnan(th.humidity)) {
+      lastTemp = th.temperature;
+      lastHum = th.humidity;
+      Serial.printf("T=%.1f°C H=%.1f%%\n", lastTemp, lastHum);
+
+      // Guardar en historial
+      saveToHistory(lastTemp, lastHum);
+    } else {
+      Serial.println("Error leyendo DHT22");
+    }
+  }
 }
